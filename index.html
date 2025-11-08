@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unified.js Client-Side Renderer: Markdown, Math, and Mermaid</title>
+
+  <!-- KaTeX CSS: Required for math rendering -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css"
+    integrity="sha384-wcIxkf4k558sdjN3jQvWAeIeIscGtxKmslMOiIoGxaAy5AC1LMMtboFfMQeHeZ5B"
+    crossorigin="anonymous"
+  />
+
+  <style>
+    /* Basic layout for the demo */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      background-color: #f8f9fa;
+      color: #212529;
+      margin: 0;
+      padding: 1rem;
+    }
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .panel {
+      flex: 1;
+      min-width: 300px;
+      display: flex;
+      flex-direction: column;
+    }
+    textarea,
+    #html-output {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo,
+        monospace;
+      font-size: 14px;
+    }
+    textarea {
+      height: 60vh;
+      min-height: 400px;
+    }
+    #html-output {
+      height: 60vh;
+      min-height: 400px;
+      background-color: #ffffff;
+      overflow-y: auto;
+    }
+    button {
+      padding: 10px 15px;
+      font-size: 16px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-bottom: 1rem;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    h1 {
+      width: 100%;
+      text-align: center;
+      color: #343a40;
+    }
+  </style>
+</head>
+<body>
+  <h1>Unified.js Client-Side Renderer</h1>
+  <div class="container">
+    <div class="panel">
+      <button id="render-button">Render Markdown</button>
+      <label for="markdown-input"><strong>Markdown Input:</strong></label>
+      <textarea id="markdown-input">
+# Markdown, Math, and Mermaid Demo
+
+This is a demonstration of client-side rendering using the Unified.js ecosystem, loaded from an ESM CDN (esm.sh).
+
+## Standard Markdown
+
+- This is a list.
+- With **bold** and _italic_ text.
+- And `inline code`.
+
+```javascript
+function hello() {
+  console.log("Hello, World!");
+}
+```
+
+## Mathematical Equations (via remark-math & rehype-katex)
+
+This section uses remark-math to parse TeX syntax.
+
+**Inline Math:**
+
+Lift ($L$) can be determined by Lift Coefficient ($C_L$).
+
+**Block Math:**
+
+The full equation for lift is:
+
+$$
+L = \frac{1}{2} \rho v^2 S C_L
+$$
+
+## Mermaid Diagrams (via rehype-mermaid & Mermaid.js)
+
+This section uses a fenced code block with the mermaid language identifier.
+
+```mermaid
+graph TD;
+    A --> B{Is it working?};
+    B -- Yes --> C[Great!];
+    B -- No --> D[Fix it!];
+    D --> B;
+```
+
+```mermaid
+sequenceDiagram
+    participant Alice
+    participant Bob
+    Alice->>Bob: Hello Bob, how are you?
+    Bob-->>Alice: I am good thanks!
+```
+      </textarea>
+    </div>
+    <div class="panel">
+      <label for="html-output"><strong>Rendered HTML Output:</strong></label>
+      <div id="html-output"></div>
+    </div>
+  </div>
+
+  <!-- 
+    ============================================================================
+    PART 1: IMPORT ALL MODULES FROM CDN
+    ============================================================================
+    All modules are loaded as ES modules from esm.sh CDN.
+    This allows us to use server-grade tools in the browser with no build step.
+  -->
+  <script type="module">
+    // 1. IMPORT ALL NECESSARY MODULES
+    // --------------------------------------------------
+    
+    // Core Unified.js engine - the pipeline runner
+    import { unified } from 'https://esm.sh/unified@11';
+    
+    // Remark plugins (Markdown processing)
+    import remarkParse from 'https://esm.sh/remark-parse@11';
+    import remarkMath from 'https://esm.sh/remark-math@6';
+    import remarkRehype from 'https://esm.sh/remark-rehype@11';
+    
+    // Rehype plugins (HTML processing)
+    import rehypeKatex from 'https://esm.sh/rehype-katex@7';
+    import rehypeMermaid from 'https://esm.sh/rehype-mermaid@2';
+    import rehypeStringify from 'https://esm.sh/rehype-stringify@10';
+    
+    // Utility for traversing AST
+    import { visit } from 'https://esm.sh/unist-util-visit@5';
+    
+    // Mermaid.js client library for rendering diagrams
+    import mermaid from 'https://esm.sh/mermaid@10';
+    
+    // Initialize Mermaid with configuration
+    mermaid.initialize({ 
+      startOnLoad: false,  // We'll manually trigger rendering
+      theme: 'default'
+    });
+
+    // 2. CREATE CUSTOM PLUGIN TO ADD MERMAID CLASS
+    // --------------------------------------------------
+    /**
+     * THE PROBLEM:
+     * - `remark-rehype` creates: <pre><code class="language-mermaid">...
+     * - `rehype-mermaid` and `mermaid.js` (client-lib) look for: <pre class="mermaid">...
+     * 
+     * THE SOLUTION:
+     * This plugin runs *after* `remarkRehype` and *before* `rehypeMermaid`.
+     * It uses `unist-util-visit` to find all Mermaid code blocks and add the
+     * "mermaid" class to the parent `<pre>` tag, ensuring `rehype-mermaid` 
+     * can find and process them. 
+     */
+    const addMermaidClass = () => (tree) => {
+      visit(tree, 'element', (node) => {
+        // Check if it's a <pre> element
+        if (node.tagName === 'pre') {
+          const codeNode = node.children[0];
+          
+          // Check if its child is a <code> element with 'language-mermaid'
+          if (
+            codeNode &&
+            codeNode.tagName === 'code' &&
+            codeNode.properties &&
+            codeNode.properties.className &&
+            codeNode.properties.className.includes('language-mermaid')
+          ) {
+            // Add the 'mermaid' class to the parent <pre> tag
+            if (!node.properties.className) {
+              node.properties.className = [];
+            }
+            node.properties.className.push('mermaid');
+          }
+        }
+      });
+    };
+
+    // 3. DEFINE THE MAIN RENDERING FUNCTION
+    // --------------------------------------------------
+
+    // Get references to the DOM elements
+    const markdownInput = document.getElementById('markdown-input');
+    const htmlOutput = document.getElementById('html-output');
+    const renderButton = document.getElementById('render-button');
+
+    /**
+     * This function orchestrates the entire "Two-Part Render" process.
+     */
+    async function renderMarkdown() {
+      try {
+        // --- PART 1: THE UNIFIED PIPELINE (String -> String) ---
+        // This process is a pure function that converts a Markdown string
+        // into an HTML string. It does not touch the DOM.
+
+        const processor = unified()
+          // 1. Parse Markdown text into an mdast (Markdown AST)
+          .use(remarkParse)
+          // 2. Parse math syntax ($$...$$) into mdast 'math' nodes 
+          .use(remarkMath)
+          // 3. Bridge: Convert mdast to hast (HTML AST)
+          .use(remarkRehype)
+          // 4. Custom Plugin: Add 'mermaid' class to <pre> tags 
+          .use(addMermaidClass) 
+          // 5. Prepare Mermaid: Find <pre class="mermaid"> and transform
+          //    it using the 'pre-mermaid' strategy.
+          .use(rehypeMermaid, {
+            strategy: 'pre-mermaid', // This is VITAL for client-side rendering
+          })
+          // 6. Render Math: Find 'math' nodes and render them to KaTeX HTML 
+          .use(rehypeKatex)
+          // 7. Stringify: Convert the final hast to an HTML string 
+          .use(rehypeStringify);
+
+        // Process the input value
+        const file = await processor.process(markdownInput.value);
+        
+        // --- PART 2: THE DOM RENDER (String -> DOM -> SVGs) ---
+
+        // 1. Inject the generated HTML string into the DOM
+        htmlOutput.innerHTML = String(file.value);
+
+        // 2. Trigger the Mermaid.js client-side library.
+        //    This scans the DOM (which now contains the <pre class="mermaid">
+        //    tags) and renders the SVGs in place. 
+        //    We use mermaid.run() for dynamic updates.
+        await mermaid.run({
+          nodes: htmlOutput.querySelectorAll('.mermaid'),
+        });
+
+      } catch (error) {
+        // Display errors in the output div for debugging
+        htmlOutput.innerHTML = `<pre style="color: red;">${error}</pre>`;
+        console.error('Markdown Rendering Error:', error);
+      }
+    }
+
+    // 4. ATTACH EVENT LISTENER AND RUN
+    // --------------------------------------------------
+
+    // Run the render function when the button is clicked
+    renderButton.addEventListener('click', renderMarkdown);
+
+    // Also run an initial render on page load
+    renderMarkdown();
+  </script>
+</body>
+</html>

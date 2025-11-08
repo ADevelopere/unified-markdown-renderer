@@ -1,0 +1,16 @@
+{
+  "name": "markdown-renderer",
+  "version": "1.0.0",
+  "description": "Standalone client-side Markdown renderer with Math and Mermaid diagrams",
+  "scripts": {
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "markdown",
+    "katex",
+    "mermaid",
+    "unified"
+  ],
+  "author": "",
+  "license": "MIT"
+}
